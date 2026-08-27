@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">WebDav Gate</string>
+
+    <!-- 服务总开关 -->
+    <string name="start_gateway">启动网关</string>
+    <string name="stop_gateway">停止网关</string>
+
+    <!-- 概览 -->
+    <string name="summary_none">尚未启动</string>
+    <string name="summary_running">运行中：%1$d 个节点</string>
+
+    <!-- 空态 -->
+    <string name="empty_hint">还没有节点\n添加一个 WebDAV 网关节点开始使用</string>
+
+    <!-- 节点列表项 -->
+    <string name="status_running_short">运行中</string>
+    <string name="status_stopped_short">已停止</string>
+    <string name="status_error_short">错误</string>
+    <string name="node_port_line">本地 http://127.0.0.1:%1$d</string>
+    <string name="edit">编辑</string>
+    <string name="remove">删除</string>
+    <string name="confirm_remove">确定删除该节点？</string>
+    <string name="add_node">添加节点</string>
+
+    <!-- 节点编辑对话框 -->
+    <string name="hint_name">节点名称（如：家庭 NAS）</string>
+    <string name="hint_cfurl">Cloudflare 302 入口地址</string>
+    <string name="hint_port">本地监听端口</string>
+    <string name="dialog_add_title">添加节点</string>
+    <string name="dialog_edit_title">编辑节点</string>
+    <string name="save">保存</string>
+    <string name="cancel">取消</string>
+    <string name="err_empty">请填写完整</string>
+    <string name="err_port_range">端口需在 1024–65535</string>
+    <string name="err_port_dup">该端口已被其他节点占用</string>
+
+    <!-- 通知 -->
+    <string name="noti_channel_name">网关服务</string>
+    <string name="noti_channel_desc">保持 WebDAV 网关后台运行</string>
+    <string name="noti_content">运行中：%1$d 个节点</string>
+    <string name="noti_action_stop">停止</string>
+
+    <!-- 日志查看器 -->
+    <string name="log_viewer_title">运行日志</string>
+    <string name="log_pause">暂停</string>
+    <string name="log_resume">继续</string>
+    <string name="log_clear">清空</string>
+    <string name="log_count">%1$d 条日志</string>
+    <string name="log_empty">暂无日志\n启动网关后这里会显示请求流转</string>
+    <string name="action_view_logs">查看日志</string>
+</resources>

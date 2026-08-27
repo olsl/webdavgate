@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- 升级到 Material 3：继承 M3 DayNight NoActionBar，自带协调的紫调 M3 配色
+         与深浅色切换；再用自定义 Toolbar 承载标题。 -->
+    <style name="Theme.WebDavGate" parent="Theme.Material3.DayNight.NoActionBar">
+        <!-- 透传状态栏，让 Toolbar 配色延伸到顶部（edge-to-edge 视觉） -->
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">?attr/colorSurface</item>
+    </style>
+
+</resources>

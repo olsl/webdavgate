@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="purple_500">#FF6200EE</color>
+    <color name="purple_700">#FF3700B3</color>
+    <color name="teal_200">#FF03DAC5</color>
+    <color name="teal_700">#FF018786</color>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+
+    <!-- 启动图标背景：M3 主紫调，与主题协调 -->
+    <color name="ic_launcher_background">#FF6750A4</color>
+
+    <!-- 节点卡片描边状态色（默认静止中性灰，运行/错误由代码切换） -->
+    <color name="stroke_neutral">#FFCAC4D0</color>
+    <color name="stroke_running">#FF388E3C</color>
+    <color name="stroke_error">#FFBA1A1A</color>
+
+    <!-- 状态点色 -->
+    <color name="dot_running">#FF388E3C</color>
+    <color name="dot_stopped">#FF9E9E9E</color>
+</resources>

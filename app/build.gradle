@@ -1,0 +1,46 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.webdavgate'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.webdavgate"
+        minSdk 24          // Android 7.0，覆盖绝大多数在用设备
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+}
+
+dependencies {
+    // AndroidX 基础库
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'com.google.android.material:material:1.12.0'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    implementation 'androidx.recyclerview:recyclerview:1.3.2'
+
+    // Apache HttpCore —— 仅用作数据模型（BasicHttpRequest/BasicHttpResponse）
+    implementation 'org.apache.httpcomponents:httpcore:4.4.16'
+
+    // OkHttp —— 上游请求转发
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+
+    // NanoHTTPD —— 本地 HTTP 服务器，替代原生 Socket 实现
+    // 自动处理 keep-alive、chunked、连接管理，比原生 Socket 更稳定流畅
+    implementation 'org.nanohttpd:nanohttpd:2.3.1'
+}

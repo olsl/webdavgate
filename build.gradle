@@ -1,0 +1,4 @@
+// 顶层 build.gradle：声明 AGP 插件，不在顶层 apply，由各 module 自行 apply
+plugins {
+    id 'com.android.application' version '8.5.2' apply false
+}

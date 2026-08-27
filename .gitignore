@@ -1,0 +1,19 @@
+# Android / Gradle build outputs
+*.iml
+.gradle/
+build/
+app/build/
+/local.properties
+captures/
+.externalNativeBuild/
+.cxx/
+
+# IDE / OS
+.idea/
+*.ipr
+*.iws
+.DS_Store
+Thumbs.db
+
+# Trae artifacts
+.javac-out/
