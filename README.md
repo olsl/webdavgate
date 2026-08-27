@@ -46,6 +46,25 @@ CX/Ott/ES 等 App ──▶ WebDavGate (127.0.0.1:8888) ──▶ NAS 直连端�
 > - [飞牛 NAS 通过 lucky 进行 STUN 穿透实现公网访问](https://cloud.tencent.com/developer/article/2619406)
 > - [飞牛 NAS 通过 lucky 和 CF 配置公网无端口访问](https://cloud.tencent.com/developer/article/2623438)
 
+## 进阶玩法：电视盒子 / 家庭网关共享
+
+APP 可运行在任何 Android 7.0+ 设备上，两种部署形态：
+
+**① 设备本机自用** — 盒子装 WebDavGate，本机 Kodi/NPlayer/MX Player 的 WebDAV 源填 `http://127.0.0.1:8888`。
+从此电视盒子上那些不支持 302 重定向的播放器也能直挂 NAS 了。
+
+**② 一台装网关，全家共享** — 内网任意一台常开机的安卓设备（老手机/电视盒子最合适）跑网关，
+其余设备全部照填它的局域网地址：
+
+```
+NAS ◀──lucky直连── 手机A (WebDavGate :8888) ──▶ 内网所有设备
+                                       ├─ 手机B/CX   → http://192.168.x.x:8888
+                                       ├─ 电视盒子/Kodi
+                                       └─ PC 软件
+```
+
+> 安全说明：上游访问仍需 NAS 的账号密码；网关仅监听于你的局域网内，公网不可达。
+
 ## 工作原理
 
 启动后在本机拉起 NanoHTTPD 服务；每个请求进入后：
