@@ -40,7 +40,9 @@ CX/Ott/ES 等 App ──▶ WebDavGate (127.0.0.1:8888) ──▶ NAS 直连端�
 
 从此无论端口怎么漂移，手机里再也不用改任何配置。
 
-> 详细图文教程：[docs/TUTORIAL.md](docs/TUTORIAL.md)
+> 详细图文教程：
+> - [302 重定向模式](docs/TUTORIAL.md)（依赖 Cloudflare）
+> - [TXT 直连模式](docs/TUTORIAL-TXT.md)（零第三方依赖，配合 lucky DNSHE）
 >
 > 配套服务端教程：
 > - [飞牛 NAS 通过 lucky 进行 STUN 穿透实现公网访问](https://cloud.tencent.com/developer/article/2619406)
