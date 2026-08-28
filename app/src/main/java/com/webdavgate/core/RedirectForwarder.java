@@ -245,9 +245,10 @@ public class RedirectForwarder {
             readTimeoutSec = 300;
             writeTimeoutSec = 600;
         } else {
-            long estimatedSec = Math.max(contentLength / (2 * 1024 * 1024), 900);
-            readTimeoutSec = (int) Math.min(estimatedSec + 60, 3600);
-            writeTimeoutSec = (int) Math.min(estimatedSec * 2, 7200);
+            // 大文件：按 512 KB/s 的保守估计留足时间，避免公网抖动导致中途超时假死
+            long estimatedSec = Math.max(contentLength / (512 * 1024), 900);
+            readTimeoutSec = (int) Math.min(estimatedSec + 300, 3600);
+            writeTimeoutSec = (int) Math.min(estimatedSec * 3, 7200);
         }
 
         final okhttp3.OkHttpClient timeoutClient = mClient.newBuilder()
@@ -603,6 +604,8 @@ public class RedirectForwarder {
             byte[] buffer = new byte[1024 * 1024];
             int read;
             long totalWritten = 0;
+            long progressInterval = 60 * 1000; // 每 60s 输出一次进度日志
+            long lastProgressTime = System.currentTimeMillis();
             while (totalWritten < mLength) {
                 // 检查线程是否被中断（客户端断开时 OkHttp 会中断线程）
                 if (Thread.currentThread().isInterrupted()) {
@@ -617,9 +620,21 @@ public class RedirectForwarder {
                 }
                 if (read > 0) {
                     sink.write(buffer, 0, read);
+                    // 每写 1MB 就主动 flush，避免 Okio 缓冲堆积导致上游 TCP 窗口得不到 ACK，
+                    // 吞吐被活活卡在 KB/s 级（典型表现为上传速度 ~500KB/s 徘徊）
+                    sink.flush();
                     totalWritten += read;
                 }
+                // 定期进度日志（方便观察卡死还是在传输）
+                long now = System.currentTimeMillis();
+                if (now - lastProgressTime >= progressInterval) {
+                    double percent = mLength > 0 ? (totalWritten * 100.0 / mLength) : 0;
+                    LogStore.i(TAG, String.format(java.util.Locale.ROOT,
+                            "StreamingRequestBody: %d/%d bytes (%.1f%%)", totalWritten, mLength, percent));
+                    lastProgressTime = now;
+                }
             }
+            LogStore.i(TAG, "StreamingRequestBody: done " + totalWritten + " bytes");
         }
     }
 

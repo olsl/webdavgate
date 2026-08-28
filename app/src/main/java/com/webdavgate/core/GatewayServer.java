@@ -68,6 +68,27 @@ public class GatewayServer extends NanoHTTPD {
     }
 
     // ------------------------------------------------------------------
+    // 客户端连接 TCP 参数优化（针对入站 socket 调大窗口/关闭 Nagle，
+    // 对跨设备内网访问尤其关键，避免默认 ~64KB 窗口造成 500KB/s 级吞吐上限）
+    // ------------------------------------------------------------------
+
+    @Override
+    protected fi.iki.elonen.NanoHTTPD.ClientHandler createClientHandler(
+            java.net.Socket acceptSocket, java.io.InputStream inputStream) {
+        if (acceptSocket != null) {
+            try {
+                acceptSocket.setSendBufferSize(1024 * 1024);
+                acceptSocket.setReceiveBufferSize(1024 * 1024);
+                acceptSocket.setTcpNoDelay(true);
+                try { acceptSocket.setSoLinger(true, 0); } catch (java.net.SocketException ignored) {}
+            } catch (java.net.SocketException e) {
+                LogStore.i(TAG, "createClientHandler: socket tune failed (benign): " + e.getMessage());
+            }
+        }
+        return super.createClientHandler(acceptSocket, inputStream);
+    }
+
+    // ------------------------------------------------------------------
     // NanoHTTPD 核心方法：处理所有 HTTP 请求
     // ------------------------------------------------------------------
 
