@@ -42,7 +42,7 @@ CX/Ott/ES 等 App ──▶ WebDavGate (127.0.0.1:8888) ──▶ NAS 直连端�
 
 > 详细图文教程：
 > - [302 重定向模式](docs/TUTORIAL.md)（依赖 Cloudflare）
-> - [TXT 直连模式](docs/TUTORIAL-TXT.md)（零第三方依赖，配合 lucky DNSHE）
+> - [TXT 直连模式](docs/TUTORIAL-TXT.md)（零第三方依赖，配合任意支持 TXT 记录更新的域名服务商，免费收费均可）
 >
 > 配套服务端教程：
 > - [飞牛 NAS 通过 lucky 进行 STUN 穿透实现公网访问](https://cloud.tencent.com/developer/article/2619406)
