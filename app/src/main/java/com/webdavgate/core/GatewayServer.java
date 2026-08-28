@@ -91,6 +91,12 @@ public class GatewayServer extends NanoHTTPD {
                 request.addHeader(entry.getKey(), entry.getValue());
             }
 
+            // 2.5) 处理 Expect: 100-continue
+            String expect = headers.get("expect");
+            if (expect != null && expect.toLowerCase().contains("100-continue")) {
+                send100Continue(session);
+            }
+
             // 3) 读取请求 body（如果有）
             String contentLengthStr = headers.get("content-length");
             long contentLength = 0;
@@ -98,6 +104,16 @@ public class GatewayServer extends NanoHTTPD {
                 try {
                     contentLength = Long.parseLong(contentLengthStr);
                 } catch (NumberFormatException ignored) { }
+            }
+
+            // DEBUG: 打印 PUT 请求所有头，定位 body 不到达的原因
+            if ("PUT".equalsIgnoreCase(method)) {
+                StringBuilder hdrDump = new StringBuilder("PUT headers: ");
+                for (Map.Entry<String, String> e : headers.entrySet()) {
+                    hdrDump.append(e.getKey()).append("=").append(e.getValue()).append(" | ");
+                }
+                hdrDump.append(" contentLength=").append(contentLength);
+                LogStore.d(TAG, hdrDump.toString());
             }
 
             // 小请求（< 1MB）缓存到内存，支持重定向重试
@@ -252,6 +268,29 @@ public class GatewayServer extends NanoHTTPD {
                 return true;
             default:
                 return false;
+        }
+    }
+
+    /**
+     * 发送 HTTP/1.1 100 Continue 响应。
+     * NanoHTTPD 2.3.1 不自动处理 Expect: 100-continue，客户端等待 100 才发 body，
+     * 导致 readBody 超时。通过反射获取 HTTPSession 的 outputStream 发送 100。
+     */
+    private void send100Continue(IHTTPSession session) {
+        try {
+            java.lang.reflect.Field f = session.getClass().getDeclaredField("outputStream");
+            f.setAccessible(true);
+            Object out = f.get(session);
+            if (out instanceof java.io.OutputStream) {
+                java.io.OutputStream os = (java.io.OutputStream) out;
+                os.write("HTTP/1.1 100 Continue\r\n\r\n".getBytes("UTF-8"));
+                os.flush();
+                LogStore.d(TAG, "Sent 100 Continue");
+            } else {
+                LogStore.w(TAG, "send100Continue: outputStream is " + (out == null ? "null" : out.getClass().getName()));
+            }
+        } catch (Exception e) {
+            LogStore.w(TAG, "send100Continue failed: " + e.getMessage());
         }
     }
 }
