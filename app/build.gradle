@@ -43,4 +43,7 @@ dependencies {
     // NanoHTTPD —— 本地 HTTP 服务器，替代原生 Socket 实现
     // 自动处理 keep-alive、chunked、连接管理，比原生 Socket 更稳定流畅
     implementation 'org.nanohttpd:nanohttpd:2.3.1'
+
+    // dnsjava —— DNS TXT 记录查询，用于 TXT 模式直接获取 STUN 地址
+    implementation 'dnsjava:dnsjava:3.5.2'
 }

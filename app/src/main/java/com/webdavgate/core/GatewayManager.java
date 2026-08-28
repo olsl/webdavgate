@@ -35,11 +35,13 @@ public class GatewayManager {
     /** 单节点运行时：一个节点对应一组转发器/处理器/服务器 */
     private static class Runtime {
         final RedirectForwarder forwarder;
+        final DnsTxtResolver txtResolver;
         final WebDavProxyHandler handler;
         final GatewayServer server;
 
-        Runtime(RedirectForwarder f, WebDavProxyHandler h, GatewayServer s) {
+        Runtime(RedirectForwarder f, DnsTxtResolver t, WebDavProxyHandler h, GatewayServer s) {
             this.forwarder = f;
+            this.txtResolver = t;
             this.handler = h;
             this.server = s;
         }
@@ -122,9 +124,18 @@ public class GatewayManager {
 
     /** 新增节点；端口冲突由调用方在 UI 校验，这里只做非空/范围基本检查 */
     public boolean addNode(GatewayNode node) {
-        if (node == null || TextUtils.isEmpty(node.getCfUrl()) || node.getLocalPort() <= 0) {
+        if (node == null || node.getLocalPort() <= 0) {
             return false;
         }
+        // REDIRECT 模式必须有 cfUrl，TXT/AUTO 模式必须有 stunDomain
+        boolean modeOk;
+        if (node.getDiscoveryMethod() == GatewayNode.DISCOVERY_REDIRECT) {
+            modeOk = !TextUtils.isEmpty(node.getCfUrl());
+        } else {
+            modeOk = !TextUtils.isEmpty(node.getStunDomain());
+        }
+        if (!modeOk) return false;
+
         synchronized (mNodes) {
             mNodes.add(node);
         }
@@ -275,20 +286,41 @@ public class GatewayManager {
             return;
         }
         try {
-            RedirectForwarder forwarder = new RedirectForwarder(n.getCfUrl());
-            WebDavProxyHandler handler = new WebDavProxyHandler(forwarder);
+            // 根据模式确定传给 RedirectForwarder 的基础 URL
+            // REDIRECT: 使用 cfUrl
+            // TXT/AUTO: 使用 stunDomain 作为基础 URL（RedirectForwarder 只用它做缓存 key 和日志）
+            String baseUrl;
+            if (n.getDiscoveryMethod() == GatewayNode.DISCOVERY_REDIRECT) {
+                baseUrl = n.getCfUrl();
+            } else {
+                baseUrl = "https://" + n.getStunDomain();
+            }
+            RedirectForwarder forwarder = new RedirectForwarder(baseUrl);
+            DnsTxtResolver txtResolver = new DnsTxtResolver();
+            WebDavProxyHandler handler = new WebDavProxyHandler(forwarder, txtResolver, n);
             GatewayServer server = new GatewayServer(n.getLocalPort(), handler);
             server.startup();
             synchronized (mRuntimes) {
-                mRuntimes.put(n.getId(), new Runtime(forwarder, handler, server));
+                mRuntimes.put(n.getId(), new Runtime(forwarder, txtResolver, handler, server));
             }
             mErrors.remove(n.getId());
-            LogStore.i(TAG, "Node started: " + n.getName() + " (port " + server.getBoundPort() + ", cf=" + n.getCfUrl() + ")");
+            String mode = getModeLabel(n.getDiscoveryMethod());
+            String address = n.getDiscoveryMethod() == GatewayNode.DISCOVERY_REDIRECT
+                    ? n.getCfUrl() : n.getStunDomain();
+            LogStore.i(TAG, "Node started: " + n.getName() + " (port " + server.getBoundPort() + ", addr=" + address + ", mode=" + mode + ")");
         } catch (Exception e) {
             // 端口占用/无权限等：记录错误，不影响其他节点启动
             String errMsg = e.getMessage();
             mErrors.put(n.getId(), errMsg);
             LogStore.e(TAG, "Node failed to start: " + n.getName() + " port=" + n.getLocalPort() + " -> " + errMsg, e);
+        }
+    }
+
+    private String getModeLabel(int method) {
+        switch (method) {
+            case GatewayNode.DISCOVERY_TXT: return "TXT";
+            case GatewayNode.DISCOVERY_AUTO: return "AUTO";
+            default: return "302";
         }
     }
 }

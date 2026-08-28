@@ -186,10 +186,10 @@ public class RedirectForwarder {
     }
 
     /**
-     * 转发一次请求，返回最终的 {@link Response}。
+     * 转发一次请求（302 模式），返回最终的 {@link Response}。
      * <b>调用方负责在消费完响应体后关闭该 Response。</b>
      *
-     * @param method       原始 HTTP 方法（GET/PUT/PROPFIND/MKCOL/COPY/MOVE... 任意字符串透传）
+     * @param method       原始 HTTP 方法
      * @param path         CX 请求路径（含 query），拼到 cfBaseUrl 之后
      * @param reqHeaders   需透传的请求头
      * @param body         请求体输入流；无体的方法传 null
@@ -197,32 +197,57 @@ public class RedirectForwarder {
      */
     public Response forward(String method, String path, Headers reqHeaders,
                             InputStream body, long contentLength) throws IOException {
+        return forwardInternal(method, path, reqHeaders, body, contentLength, false);
+    }
+
+    /**
+     * 转发一次请求（TXT 透明代理模式），直接用已解析的 STUN origin。
+     * 不处理重定向，不修改 WebDAV 相关头，纯 HTTP 透传。
+     *
+     * @param method       原始 HTTP 方法
+     * @param path         请求路径（含 query）
+     * @param reqHeaders   需透传的请求头
+     * @param body         请求体输入流
+     * @param contentLength 请求体长度
+     * @param stunOrigin   已解析的 STUN 直连 origin（如 http://1.2.3.4:5678）
+     * @param hostOverride Host 头覆盖值（如 nas.example.com），
+     *                     用于 lucky 等按域名路由的反向代理；传空则用 STUN 地址的 host
+     */
+    public Response forwardDirect(String method, String path, Headers reqHeaders,
+                                  InputStream body, long contentLength,
+                                  String stunOrigin, String hostOverride) throws IOException {
+        return forwardInternal(method, path, reqHeaders, body, contentLength, true, stunOrigin, hostOverride);
+    }
+
+    /** 内部统一转发逻辑 */
+    private Response forwardInternal(String method, String path, Headers reqHeaders,
+                                     InputStream body, long contentLength,
+                                     boolean directMode, String... stunOriginOpt) throws IOException {
+        // TXT 模式下的目标 origin 与 Host 覆盖值
+        String txtOrigin = directMode && stunOriginOpt.length > 0 ? stunOriginOpt[0] : null;
+        String hostOverride = directMode && stunOriginOpt.length > 1 ? stunOriginOpt[1] : null;
+
         // streaming 模式判定：大文件（> 1MB）走流式上传，避免缓存到内存或磁盘
         boolean streaming = body != null && contentLength > MEMORY_BUFFER_LIMIT;
-        LogStore.d(TAG, "forward: method=" + method + " streaming=" + streaming
+        LogStore.d(TAG, "forward(" + (directMode ? "TXT" : "302") + "): method=" + method + " streaming=" + streaming
                 + " contentLength=" + contentLength);
 
-        // 动态超时策略：根据文件大小估算传输时间
-        // 假设网络吞吐 2MB/s（保守估计），加上连接建立余量
+        // 动态超时策略
         int readTimeoutSec;
         int writeTimeoutSec;
         if (contentLength <= 0) {
-            // 未知长度或无 body
             readTimeoutSec = 30;
             writeTimeoutSec = 30;
         } else if (contentLength <= 10 * 1024 * 1024) {
-            // 小请求（< 10MB）：30 秒足够
             readTimeoutSec = 30;
             writeTimeoutSec = 60;
         } else if (contentLength <= 100 * 1024 * 1024) {
-            // 中等文件（10-100MB）：5 分钟
             readTimeoutSec = 300;
             writeTimeoutSec = 600;
         } else {
-            // 大文件（> 100MB）：按 2MB/s 估算，至少 15 分钟
             long estimatedSec = Math.max(contentLength / (2 * 1024 * 1024), 900);
-            readTimeoutSec = (int) Math.min(estimatedSec + 60, 3600);   // 最多 1 小时
-            writeTimeoutSec = (int) Math.min(estimatedSec * 2, 7200);   // 最多 2 小时
+            readTimeoutSec = (int) Math.min(estimatedSec + 60, 3600);
+            writeTimeoutSec = (int) Math.min(estimatedSec * 2, 7200);
         }
 
         final okhttp3.OkHttpClient timeoutClient = mClient.newBuilder()
@@ -230,7 +255,7 @@ public class RedirectForwarder {
                 .writeTimeout(writeTimeoutSec, TimeUnit.SECONDS)
                 .build();
 
-        // 1) 非 streaming 模式：把请求体缓存成可重复读载体
+        // 非 streaming 模式：缓存请求体
         BufferedBody buffered = null;
         if (body != null && !streaming) {
             buffered = bufferBody(body, contentLength);
@@ -238,110 +263,143 @@ public class RedirectForwarder {
 
         File spillFile = (buffered instanceof FileBody) ? ((FileBody) buffered).file : null;
         try {
-            // 2) 优先走 STUN 直连缓存
-            String cachedOrigin = getCachedOrigin(mCfBaseUrl);
-            String url;
-            boolean useCache = cachedOrigin != null;
-            if (useCache) {
-                url = joinUrl(cachedOrigin, path);
-                LogStore.d(TAG, "Cache hit: " + method + " " + url);
-            } else {
-                url = joinUrl(mCfBaseUrl, path);
-                LogStore.d(TAG, "Hop 0: " + method + " " + url);
-            }
+            if (directMode) {
+                // ====== TXT 透明代理模式：简化路径 ======
+                // 直接用 TXT 解析出的 origin，不处理重定向
+                String url = joinUrl(txtOrigin, path);
+                LogStore.d(TAG, "TXT mode: forwarding to " + url);
 
-            Request request = streaming
-                    ? buildStreamingRequest(method, url, reqHeaders, body, contentLength)
-                    : buildRequest(method, url, reqHeaders, buffered);
+                // TXT 模式下不修改 Destination 等 WebDAV 头（纯 HTTP 透传）
+                // Host 头由构建器设置：hostOverride 非空用之（入口域名），否则 OkHttp 按 URL 生成
+                Request request = streaming
+                        ? buildStreamingRequest(method, url, reqHeaders, body, contentLength, hostOverride)
+                        : buildRequest(method, url, reqHeaders, buffered, hostOverride);
 
-            Response response;
-            long startTime = System.currentTimeMillis();
-            try {
-                response = timeoutClient.newCall(request).execute();
-                long elapsed = System.currentTimeMillis() - startTime;
-                LogStore.d(TAG, "Response received: " + response.code() + " (" + elapsed + "ms)");
-            } catch (IOException e) {
-                LogStore.w(TAG, "Request failed: " + method + " " + url + " - " + e.getMessage());
-                if (useCache) {
-                    // 缓存命中但请求失败 → 失效缓存，让后续请求走 CF 重新学习
-                    LogStore.w(TAG, "Cache hit but failed, invalidating cache: " + e.getMessage());
-                    invalidateCache(mCfBaseUrl);
-                    if (streaming) {
-                        // streaming 模式下 body 无法重放，只能抛异常
-                        LogStore.w(TAG, "Streaming mode, can't fallback, throwing");
-                        throw e;
-                    } else {
-                        // 非 streaming 模式下 buffer 可重放，回退到 CF
-                        LogStore.w(TAG, "Falling back to CF: " + method + " " + mCfBaseUrl);
-                        url = joinUrl(mCfBaseUrl, path);
-                        request = buildRequest(method, url, reqHeaders, buffered);
-                        try {
-                            response = timeoutClient.newCall(request).execute();
-                            LogStore.d(TAG, "Fallback response: " + response.code());
-                        } catch (IOException e2) {
-                            LogStore.w(TAG, "Fallback to CF also failed: " + e2.getMessage());
-                            throw e2;
-                        }
-                    }
-                } else {
+                Response response;
+                long startTime = System.currentTimeMillis();
+                try {
+                    response = timeoutClient.newCall(request).execute();
+                    long elapsed = System.currentTimeMillis() - startTime;
+                    LogStore.d(TAG, "TXT response: " + response.code() + " (" + elapsed + "ms)");
+                } catch (IOException e) {
+                    LogStore.w(TAG, "TXT forward failed: " + e.getMessage());
                     throw e;
                 }
-            }
 
-            // 3) 手动消化 302/307
-            int redirects = 0;
-            while (!streaming && isRedirect(response.code()) && redirects < MAX_REDIRECTS) {
-                String location = response.header("Location");
-                LogStore.i(TAG, "Hop " + redirects + ": " + response.code() + " → " + (location != null ? location : "null"));
-                response.close();
-                if (location == null) break;
-                String nextUrl = resolveLocation(url, location);
-                if (!useCache && redirects == 0) {
-                    String stunOrigin = originOf(nextUrl);
-                    if (stunOrigin != null) {
-                        putCachedOrigin(mCfBaseUrl, stunOrigin);
-                        LogStore.i(TAG, "Cache learned: " + hostOf(mCfBaseUrl) + " → " + stunOrigin);
+                // 简单的 5xx 重试（最多 2 次）
+                int retries = 0;
+                while (!streaming && isTransientError(response.code()) && retries < 2) {
+                    retries++;
+                    LogStore.w(TAG, "TXT transient " + response.code() + ", retry " + retries + "/2");
+                    response.close();
+                    try { Thread.sleep(100 * retries); } catch (InterruptedException ignored) { }
+                    request = buildRequest(method, url, reqHeaders, buffered, hostOverride);
+                    response = timeoutClient.newCall(request).execute();
+                }
+                return response;
+
+            } else {
+                // ====== 302 重定向模式：原有逻辑 ======
+                String cachedOrigin = getCachedOrigin(mCfBaseUrl);
+                String url;
+                boolean useCache = cachedOrigin != null;
+                if (useCache) {
+                    url = joinUrl(cachedOrigin, path);
+                    LogStore.d(TAG, "Cache hit: " + method + " " + url);
+                } else {
+                    url = joinUrl(mCfBaseUrl, path);
+                    LogStore.d(TAG, "Hop 0: " + method + " " + url);
+                }
+
+                Request request = streaming
+                        ? buildStreamingRequest(method, url, reqHeaders, body, contentLength)
+                        : buildRequest(method, url, reqHeaders, buffered);
+
+                Response response;
+                long startTime = System.currentTimeMillis();
+                try {
+                    response = timeoutClient.newCall(request).execute();
+                    long elapsed = System.currentTimeMillis() - startTime;
+                    LogStore.d(TAG, "Response received: " + response.code() + " (" + elapsed + "ms)");
+                } catch (IOException e) {
+                    LogStore.w(TAG, "Request failed: " + method + " " + url + " - " + e.getMessage());
+                    if (useCache) {
+                        LogStore.w(TAG, "Cache hit but failed, invalidating cache: " + e.getMessage());
+                        invalidateCache(mCfBaseUrl);
+                        if (streaming) {
+                            LogStore.w(TAG, "Streaming mode, can't fallback, throwing");
+                            throw e;
+                        } else {
+                            LogStore.w(TAG, "Falling back to CF: " + method + " " + mCfBaseUrl);
+                            url = joinUrl(mCfBaseUrl, path);
+                            request = buildRequest(method, url, reqHeaders, buffered);
+                            try {
+                                response = timeoutClient.newCall(request).execute();
+                                LogStore.d(TAG, "Fallback response: " + response.code());
+                            } catch (IOException e2) {
+                                LogStore.w(TAG, "Fallback to CF also failed: " + e2.getMessage());
+                                throw e2;
+                            }
+                        }
+                    } else {
+                        throw e;
                     }
                 }
-                redirects++;
-                LogStore.d(TAG, "Hop " + redirects + ": " + method + " " + nextUrl);
-                Headers headersForNext = stripCrossOriginHeaders(url, nextUrl, reqHeaders);
-                request = buildRequest(method, nextUrl, headersForNext, buffered);
-                long hopStart = System.currentTimeMillis();
-                response = timeoutClient.newCall(request).execute();
-                LogStore.d(TAG, "Hop " + redirects + " response: " + response.code() + " (" + (System.currentTimeMillis() - hopStart) + "ms)");
-                url = nextUrl;
-            }
 
-            if (streaming && isRedirect(response.code())) {
-                LogStore.w(TAG, "Streaming mode got redirect " + response.code() + ", returning to CX");
-            }
-            LogStore.d(TAG, "Final: " + response.code() + " " + url + " (redirects=" + redirects + ")");
-
-            // 416/5xx 自动重试（仅对非写操作，写操作失败直接返回）
-            boolean isWriteMethod = isWriteMethod(method);
-            int retries = 0;
-            while (!streaming && isTransientError(response.code()) && retries < 2) {
-                if (isWriteMethod && response.code() == 502) {
-                    // 写操作遇到 502：可能是 STUN 直连不支持，回退到 CF
-                    LogStore.w(TAG, "Write method " + method + " got 502, invalidating cache and retrying via CF");
+                // 手动消化 302/307
+                int redirects = 0;
+                while (!streaming && isRedirect(response.code()) && redirects < MAX_REDIRECTS) {
+                    String location = response.header("Location");
+                    LogStore.i(TAG, "Hop " + redirects + ": " + response.code() + " → " + (location != null ? location : "null"));
                     response.close();
-                    invalidateCache(mCfBaseUrl);
-                    url = joinUrl(mCfBaseUrl, path);
+                    if (location == null) break;
+                    String nextUrl = resolveLocation(url, location);
+                    if (!useCache && redirects == 0) {
+                        String stunOrigin = originOf(nextUrl);
+                        if (stunOrigin != null) {
+                            putCachedOrigin(mCfBaseUrl, stunOrigin);
+                            LogStore.i(TAG, "Cache learned: " + hostOf(mCfBaseUrl) + " → " + stunOrigin);
+                        }
+                    }
+                    redirects++;
+                    LogStore.d(TAG, "Hop " + redirects + ": " + method + " " + nextUrl);
+                    Headers headersForNext = stripCrossOriginHeaders(url, nextUrl, reqHeaders);
+                    request = buildRequest(method, nextUrl, headersForNext, buffered);
+                    long hopStart = System.currentTimeMillis();
+                    response = timeoutClient.newCall(request).execute();
+                    LogStore.d(TAG, "Hop " + redirects + " response: " + response.code() + " (" + (System.currentTimeMillis() - hopStart) + "ms)");
+                    url = nextUrl;
+                }
+
+                if (streaming && isRedirect(response.code())) {
+                    LogStore.w(TAG, "Streaming mode got redirect " + response.code() + ", returning to CX");
+                }
+                LogStore.d(TAG, "Final: " + response.code() + " " + url + " (redirects=" + redirects + ")");
+
+                // 416/5xx 自动重试
+                int retries = 0;
+                while (!streaming && isTransientError(response.code()) && retries < 2) {
+                    boolean isWriteMethod = isWriteMethod(method);
+                    if (isWriteMethod && response.code() == 502) {
+                        LogStore.w(TAG, "Write method " + method + " got 502, invalidating cache and retrying via CF");
+                        response.close();
+                        invalidateCache(mCfBaseUrl);
+                        url = joinUrl(mCfBaseUrl, path);
+                        request = buildRequest(method, url, reqHeaders, buffered);
+                        response = timeoutClient.newCall(request).execute();
+                        LogStore.d(TAG, "Fallback to CF final: " + response.code() + " " + url);
+                        break;
+                    }
+                    retries++;
+                    LogStore.w(TAG, "Transient " + response.code() + ", retry " + retries + "/2");
+                    response.close();
+                    try { Thread.sleep(100 * retries); } catch (InterruptedException ignored) { }
                     request = buildRequest(method, url, reqHeaders, buffered);
                     response = timeoutClient.newCall(request).execute();
-                    LogStore.d(TAG, "Fallback to CF final: " + response.code() + " " + url);
-                    break; // 只尝试一次回退
+                    LogStore.d(TAG, "Retry " + retries + " final: " + response.code() + " " + url);
                 }
-                retries++;
-                LogStore.w(TAG, "Transient " + response.code() + ", retry " + retries + "/2");
-                response.close();
-                try { Thread.sleep(100 * retries); } catch (InterruptedException ignored) { }
-                request = buildRequest(method, url, reqHeaders, buffered);
-                response = timeoutClient.newCall(request).execute();
-                LogStore.d(TAG, "Retry " + retries + " final: " + response.code() + " " + url);
+                return response;
             }
-            return response;
         } finally {
             if (spillFile != null) {
                 spillFile.delete();
@@ -356,19 +414,33 @@ public class RedirectForwarder {
     /** 构造 OkHttp 请求，处理"方法是否有 body"这一 OkHttp 强约束 */
     private Request buildRequest(String method, String url, Headers reqHeaders,
                                  BufferedBody body) {
+        return buildRequest(method, url, reqHeaders, body, null);
+    }
+
+    private Request buildRequest(String method, String url, Headers reqHeaders,
+                                 BufferedBody body, String hostOverride) {
         Request.Builder rb = new Request.Builder().url(url);
 
         // 强制 Connection: close，避免复用僵尸连接（STUN 直连服务器空闲后会关闭连接）
         rb.header("Connection", "close");
 
         boolean hasAcceptEncoding = false;
+        boolean hostSet = false;
         String destinationHeader = null;
         for (int i = 0; i < reqHeaders.size(); i++) {
             String name = reqHeaders.name(i);
-            // Hop-by-Hop 头与 Host/长度头交给 OkHttp 自行管理，不手动覆盖
-            if (isHopByHop(name) || "Host".equalsIgnoreCase(name)
+            // Hop-by-Hop 头与长度头交给 OkHttp 自行管理，不手动覆盖
+            if (isHopByHop(name)
                     || "Content-Length".equalsIgnoreCase(name)
                     || "Connection".equalsIgnoreCase(name)) {
+                continue;
+            }
+            // Host：TXT 模式用 hostOverride（入口域名，lucky 按域名路由）；否则 OkHttp 按 URL 生成
+            if ("Host".equalsIgnoreCase(name)) {
+                if (hostOverride != null && !hostSet) {
+                    rb.header("Host", hostOverride);
+                    hostSet = true;
+                }
                 continue;
             }
             // MOVE/COPY 的 Destination 单独记录，最后统一按目标地址改写 origin
@@ -414,17 +486,31 @@ public class RedirectForwarder {
      */
     private Request buildStreamingRequest(String method, String url, Headers reqHeaders,
                                           InputStream body, long contentLength) {
+        return buildStreamingRequest(method, url, reqHeaders, body, contentLength, null);
+    }
+
+    private Request buildStreamingRequest(String method, String url, Headers reqHeaders,
+                                          InputStream body, long contentLength, String hostOverride) {
         Request.Builder rb = new Request.Builder().url(url);
 
         // 强制 Connection: close，避免复用僵尸连接
         rb.header("Connection", "close");
 
+        boolean hostSet = false;
         String destinationHeader = null;
         for (int i = 0; i < reqHeaders.size(); i++) {
             String name = reqHeaders.name(i);
-            if (isHopByHop(name) || "Host".equalsIgnoreCase(name)
+            if (isHopByHop(name)
                     || "Content-Length".equalsIgnoreCase(name)
                     || "Connection".equalsIgnoreCase(name)) {
+                continue;
+            }
+            // Host：TXT 模式用 hostOverride（入口域名，lucky 按域名路由）；否则 OkHttp 按 URL 生成
+            if ("Host".equalsIgnoreCase(name)) {
+                if (hostOverride != null && !hostSet) {
+                    rb.header("Host", hostOverride);
+                    hostSet = true;
+                }
                 continue;
             }
             if ("Destination".equalsIgnoreCase(name)) {

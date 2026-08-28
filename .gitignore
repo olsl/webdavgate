@@ -17,3 +17,4 @@ Thumbs.db
 
 # Trae artifacts
 .javac-out/
+.vscode/

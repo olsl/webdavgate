@@ -269,15 +269,48 @@ public class MainActivity extends AppCompatActivity
         TextInputEditText etName = body.findViewById(R.id.editName);
         TextInputEditText etUrl = body.findViewById(R.id.editUrl);
         TextInputEditText etPort = body.findViewById(R.id.editPort);
+        android.widget.RadioGroup discoveryGroup = body.findViewById(R.id.discoveryGroup);
+        android.widget.TextView modeHelp = body.findViewById(R.id.modeHelp);
 
         boolean edit = node != null;
+        int discoveryMethod = GatewayNode.DISCOVERY_REDIRECT;
+
         if (edit) {
             etName.setText(node.getName());
-            etUrl.setText(node.getCfUrl());
+            // TXT 模式：URL 字段存的是 TXT 域名
+            if (node.getDiscoveryMethod() == GatewayNode.DISCOVERY_TXT) {
+                etUrl.setText(node.getStunDomain());
+            } else {
+                etUrl.setText(node.getCfUrl());
+            }
             etPort.setText(String.valueOf(node.getLocalPort()));
+            discoveryMethod = node.getDiscoveryMethod();
         } else {
             etPort.setText("8888");
         }
+
+        // 设置模式单选
+        switch (discoveryMethod) {
+            case GatewayNode.DISCOVERY_TXT:
+                discoveryGroup.check(R.id.radioTxt);
+                break;
+            default:
+                discoveryGroup.check(R.id.radioRedirect);
+        }
+
+        // 模式变化时更新帮助文字
+        android.widget.RadioGroup.OnCheckedChangeListener radioListener = (group, checkedId) -> {
+            if (checkedId == R.id.radioTxt) {
+                modeHelp.setText(R.string.mode_txt_help);
+                etUrl.setHint(R.string.hint_address);
+            } else {
+                modeHelp.setText(R.string.mode_302_help);
+                etUrl.setHint(R.string.hint_address);
+            }
+        };
+        discoveryGroup.setOnCheckedChangeListener(radioListener);
+        // 初始显示
+        radioListener.onCheckedChanged(discoveryGroup, discoveryGroup.getCheckedRadioButtonId());
 
         mEditDialog = new MaterialAlertDialogBuilder(this)
                 .setView(body)
@@ -308,18 +341,63 @@ public class MainActivity extends AppCompatActivity
                             return;
                         }
                     }
+
+                    // 获取选择的模式
+                    int selectedMethod;
+                    int checkedId = discoveryGroup.getCheckedRadioButtonId();
+                    if (checkedId == R.id.radioTxt) {
+                        selectedMethod = GatewayNode.DISCOVERY_TXT;
+                    } else {
+                        selectedMethod = GatewayNode.DISCOVERY_REDIRECT;
+                    }
+
                     if (edit) {
                         node.setName(name);
-                        node.setCfUrl(url);
                         node.setLocalPort(port);
+                        node.setDiscoveryMethod(selectedMethod);
+                        if (selectedMethod == GatewayNode.DISCOVERY_REDIRECT) {
+                            node.setCfUrl(normalizeCfUrl(url));
+                            node.setStunDomain("");
+                        } else {
+                            node.setCfUrl("");
+                            node.setStunDomain(normalizeTxtDomain(url));
+                        }
                         mManager.updateNode(node);
                     } else {
-                        mManager.addNode(new GatewayNode(name, url, port));
+                        GatewayNode newNode = new GatewayNode(name, "", port);
+                        newNode.setDiscoveryMethod(selectedMethod);
+                        if (selectedMethod == GatewayNode.DISCOVERY_REDIRECT) {
+                            newNode.setCfUrl(normalizeCfUrl(url));
+                            newNode.setStunDomain("");
+                        } else {
+                            newNode.setCfUrl("");
+                            newNode.setStunDomain(normalizeTxtDomain(url));
+                        }
+                        mManager.addNode(newNode);
                     }
                 })
                 .setNegativeButton(R.string.cancel, null)
                 .create();
         mEditDialog.show();
+    }
+
+    /** 规范化 302 入口地址：没填协议前缀时自动补 https:// */
+    private static String normalizeCfUrl(String url) {
+        String u = url != null ? url.trim() : "";
+        if (!u.isEmpty() && !u.contains("://")) {
+            u = "https://" + u;
+        }
+        return u;
+    }
+
+    /** 规范化 TXT 入口域名：自动去掉误填的协议前缀和路径 */
+    private static String normalizeTxtDomain(String url) {
+        String u = url != null ? url.trim() : "";
+        int schemeIdx = u.indexOf("://");
+        if (schemeIdx >= 0) u = u.substring(schemeIdx + 3);
+        int slashIdx = u.indexOf('/');
+        if (slashIdx > 0) u = u.substring(0, slashIdx);
+        return u;
     }
 
     private static String textOf(TextInputEditText et) {

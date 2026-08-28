@@ -25,8 +25,9 @@
 
     <!-- 节点编辑对话框 -->
     <string name="hint_name">节点名称（如：家庭 NAS）</string>
-    <string name="hint_cfurl">Cloudflare 302 入口地址</string>
+    <string name="hint_address">入口地址或 TXT 域名</string>
     <string name="hint_port">本地监听端口</string>
+    <string name="hint_stun_domain">TXT 域名（可选，留空自动从 CF 地址提取）</string>
     <string name="dialog_add_title">添加节点</string>
     <string name="dialog_edit_title">编辑节点</string>
     <string name="save">保存</string>
@@ -34,6 +35,15 @@
     <string name="err_empty">请填写完整</string>
     <string name="err_port_range">端口需在 1024–65535</string>
     <string name="err_port_dup">该端口已被其他节点占用</string>
+
+    <!-- 发现模式 -->
+    <string name="discovery_mode">地址发现方式</string>
+    <string name="mode_302">302 重定向</string>
+    <string name="mode_txt">TXT 直连</string>
+    <string name="mode_302_help">填写 Cloudflare 入口地址（如 https://nas.example.com）</string>
+    <string name="mode_txt_help">填写 lucky 反代规则中的域名（如 nas.example.com），网关自动查该域名 TXT 记录获取 STUN 地址，并以原域名作为 Host 转发，lucky 按域名路由</string>
+    <string name="mode_auto_help">优先尝试 TXT 查询，失败时回退到 302 重定向</string>
+    <string name="txt_mode_help">TXT 模式：直接查询 DNS TXT 记录获取 STUN 地址。\nTXT 记录格式支持：stun=http://IP:Port 或 ip=IP&amp;port=Port</string>
 
     <!-- 通知 -->
     <string name="noti_channel_name">网关服务</string>

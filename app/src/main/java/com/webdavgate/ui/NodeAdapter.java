@@ -68,7 +68,11 @@ public class NodeAdapter extends RecyclerView.Adapter<NodeAdapter.VH> {
         h.name.setText(n.getName());
         h.port.setText(h.itemView.getContext().getString(
                 R.string.node_port_line, n.getLocalPort()));
-        h.url.setText(n.getCfUrl());
+        // 显示模式标签 + 地址：302 模式显示 CF 地址，TXT/AUTO 模式显示入口域名
+        String addr = n.getDiscoveryMethod() == GatewayNode.DISCOVERY_REDIRECT
+                ? n.getCfUrl() : n.getStunDomain();
+        String modeLabel = getModeLabel(n.getDiscoveryMethod());
+        h.url.setText(addr + " [" + modeLabel + "]");
 
         boolean running = mManager != null && mManager.isRunning(n.getId());
         String err = mManager != null ? mManager.getError(n.getId()) : null;
@@ -110,6 +114,14 @@ public class NodeAdapter extends RecyclerView.Adapter<NodeAdapter.VH> {
     @Override
     public int getItemCount() {
         return mNodes.size();
+    }
+
+    private String getModeLabel(int method) {
+        switch (method) {
+            case GatewayNode.DISCOVERY_TXT: return "TXT";
+            case GatewayNode.DISCOVERY_AUTO: return "AUTO";
+            default: return "302";
+        }
     }
 
     static class VH extends RecyclerView.ViewHolder {
