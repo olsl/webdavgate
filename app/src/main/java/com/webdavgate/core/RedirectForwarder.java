@@ -269,7 +269,7 @@ public class RedirectForwarder {
                 String url = joinUrl(txtOrigin, path);
                 LogStore.d(TAG, "TXT mode: forwarding to " + url);
 
-                // TXT 模式下不修改 Destination 等 WebDAV 头（纯 HTTP 透传）
+                // Destination 按 Host 同源规则改写：TXT 模式→入口域名 origin，302 模式→STUN origin
                 // Host 头由构建器设置：hostOverride 非空用之（入口域名），否则 OkHttp 按 URL 生成
                 Request request = streaming
                         ? buildStreamingRequest(method, url, reqHeaders, body, contentLength, hostOverride)
@@ -454,7 +454,7 @@ public class RedirectForwarder {
             rb.addHeader(name, reqHeaders.value(i));
         }
         if (destinationHeader != null) {
-            rb.addHeader("Destination", rewriteDestinationOrigin(url, destinationHeader));
+            rb.addHeader("Destination", rewriteDestinationOrigin(url, destinationHeader, hostOverride));
         }
         // 显式声明 Accept-Encoding 以阻止 OkHttp 自动添加 gzip 并自动解压，
         // 从而保证响应体原样透传（Content-Length 与实际字节数一致，不会被 OkHttp 改动）
@@ -520,7 +520,7 @@ public class RedirectForwarder {
             rb.addHeader(name, reqHeaders.value(i));
         }
         if (destinationHeader != null) {
-            rb.addHeader("Destination", rewriteDestinationOrigin(url, destinationHeader));
+            rb.addHeader("Destination", rewriteDestinationOrigin(url, destinationHeader, hostOverride));
         }
 
         RequestBody reqBody = new StreamingRequestBody(body, contentLength);
@@ -536,11 +536,25 @@ public class RedirectForwarder {
      * 多数 NAS 实现（Apache mod_dav 等）要求 Destination 与当前请求同源，
      * 不一致直接返回 502 Bad Gateway —— 这正是"覆盖上传失败"的根因。
      *
+     * <p>origin 的取值规则：
+     * <ul>
+     *   <li>302 模式（hostOverride=null）：Host 即 STUN 目标地址，用目标 URL 的 origin；</li>
+     *   <li>TXT 模式（hostOverride=入口域名）：请求带 Host: 入口域名（lucky 按域名路由），
+     *       NAS 收到的 Host 也是入口域名，因此 Destination 必须改写为入口域名 origin，
+     *       否则与 Host 不同源 → 502（改名/覆盖失败）。</li>
+     * </ul>
+     *
      * <p>处理：保留 Destination 的 path+query 部分原样不动（覆盖语义不变），
-     * 仅替换 origin 为当前请求的目标 origin；相对路径形式则补全为绝对 URI。
+     * 仅替换 origin；相对路径形式则补全为绝对 URI。
      */
-    private static String rewriteDestinationOrigin(String targetUrl, String destination) {
-        String targetOrigin = originOf(targetUrl);
+    private static String rewriteDestinationOrigin(String targetUrl, String destination, String hostOverride) {
+        String targetOrigin;
+        if (hostOverride != null && !hostOverride.isEmpty()) {
+            // TXT 模式：与请求 Host 头同源（入口域名）
+            targetOrigin = "http://" + hostOverride;
+        } else {
+            targetOrigin = originOf(targetUrl);
+        }
         if (targetOrigin == null) return destination;
 
         String result;

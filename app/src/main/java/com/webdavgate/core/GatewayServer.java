@@ -209,14 +209,27 @@ public class GatewayServer extends NanoHTTPD {
 
         HttpEntity entity = response.getEntity();
 
-        // 1) 先创建基础 Response
-        Response nanoResponse;
-        String contentType = "application/octet-stream";
-
+        // 1) 确定 Content-Type（单一来源，避免重复头）：
+        //    优先 entity 自带 → 其次响应头 → 最后 octet-stream 兜底。
+        //    NanoHTTPD 构造函数会自动生成 Content-Type 头，因此复制上游头时必须跳过它，
+        //    否则浏览器会看到两个 Content-Type，取第一个（octet-stream）→ 网页不渲染（白屏）。
+        String contentType = null;
         if (entity != null && entity.getContentType() != null) {
             contentType = entity.getContentType().getValue();
         }
+        if (contentType == null) {
+            for (org.apache.http.Header h : response.getAllHeaders()) {
+                if ("Content-Type".equalsIgnoreCase(h.getName())) {
+                    contentType = h.getValue();
+                    break;
+                }
+            }
+        }
+        if (contentType == null) {
+            contentType = "application/octet-stream";
+        }
 
+        Response nanoResponse;
         if (entity != null) {
             try {
                 InputStream bodyStream = entity.getContent();
@@ -225,11 +238,13 @@ public class GatewayServer extends NanoHTTPD {
                 if (contentLength > 0 && bodyStream != null) {
                     // 固定长度响应，支持流式 + keep-alive
                     nanoResponse = newFixedLengthResponse(status, contentType, bodyStream, contentLength);
-                } else if (bodyStream != null) {
+                } else if (contentLength == 0 || bodyStream == null) {
+                    // 空 body（HEAD / 204 / 304 等）：固定空响应（Content-Length: 0），
+                    // 避免 chunked 路径产生 Content-Length: -1 这类非法头
+                    nanoResponse = newFixedLengthResponse(status, contentType, "");
+                } else {
                     // 未知长度，使用 chunked 传输
                     nanoResponse = newChunkedResponse(status, contentType, bodyStream);
-                } else {
-                    nanoResponse = newFixedLengthResponse(status, contentType, "");
                 }
             } catch (Exception e) {
                 LogStore.w(TAG, "toNanoResponse: error getting content: " + e.getMessage());
@@ -241,11 +256,13 @@ public class GatewayServer extends NanoHTTPD {
             nanoResponse = newFixedLengthResponse(status, contentType, "");
         }
 
-        // 2) 复制所有响应头（除了 hop-by-hop 和 content-length/transfer-encoding）
+        // 2) 复制所有响应头（跳过 hop-by-hop、Content-Length/Transfer-Encoding、
+        //    以及 Content-Type——它已通过构造参数设置，重复会导致浏览器白屏）
         for (org.apache.http.Header header : response.getAllHeaders()) {
             String name = header.getName();
             if (!isHopByHop(name) && !"Content-Length".equalsIgnoreCase(name)
-                    && !"Transfer-Encoding".equalsIgnoreCase(name)) {
+                    && !"Transfer-Encoding".equalsIgnoreCase(name)
+                    && !"Content-Type".equalsIgnoreCase(name)) {
                 nanoResponse.addHeader(name, header.getValue());
             }
         }
