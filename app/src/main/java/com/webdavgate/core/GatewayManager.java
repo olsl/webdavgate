@@ -6,6 +6,7 @@ import android.text.TextUtils;
 import com.webdavgate.log.LogStore;
 import com.webdavgate.model.GatewayNode;
 import com.webdavgate.store.NodeStore;
+import com.webdavgate.tcp.TcpTunnelHandler;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -32,18 +33,35 @@ public class GatewayManager {
 
     private static final String TAG = "GatewayManager";
 
-    /** 单节点运行时：一个节点对应一组转发器/处理器/服务器 */
+    /** 单节点运行时：一个节点对应一组转发器/处理器/服务器。
+     *  TCP 透传模式与 HTTP 反向代理模式二选一，故两者均可为 null。 */
     private static class Runtime {
         final RedirectForwarder forwarder;
         final DnsTxtResolver txtResolver;
-        final WebDavProxyHandler handler;
+        final WebDavProxyHandler httpHandler;
+        /** TCP 透传模式处理器（与 HTTP 服务器二选一，可为 null） */
+        final TcpTunnelHandler tcpHandler;
+        /** HTTP 反向代理模式的本地服务器（可为 null） */
         final GatewayServer server;
 
-        Runtime(RedirectForwarder f, DnsTxtResolver t, WebDavProxyHandler h, GatewayServer s) {
+        Runtime(RedirectForwarder f, DnsTxtResolver t, WebDavProxyHandler h, TcpTunnelHandler tcp, GatewayServer s) {
             this.forwarder = f;
             this.txtResolver = t;
-            this.handler = h;
+            this.httpHandler = h;
+            this.tcpHandler = tcp;
             this.server = s;
+        }
+
+        /** 节点是否在运行：TCP 模式看隧道，HTTP 模式看服务器 */
+        boolean isRunning() {
+            if (tcpHandler != null) return tcpHandler.isRunning();
+            return server != null && server.isRunning();
+        }
+
+        /** 停止该节点的全部监听资源 */
+        void shutdown() {
+            if (tcpHandler != null) tcpHandler.shutdown();
+            if (server != null) server.shutdown();
         }
     }
 
@@ -77,15 +95,9 @@ public class GatewayManager {
             mNodes.clear();
             mNodes.addAll(loaded);
         }
-        // 首次使用或全部节点被删除时，自动创建默认节点
+        // 首次使用或全部节点被删除时，不自动创建默认节点
         if (mNodes.isEmpty()) {
-            GatewayNode def = new GatewayNode("default", "hbv", "https://nas.shdj.cc.cd/dav", 8888, true);
-            def.setEnabled(true);
-            synchronized (mNodes) {
-                mNodes.add(def);
-            }
-            mStore.saveAll(getNodes());
-            LogStore.i(TAG, "Created default node: hbv (port 8888)");
+            LogStore.i(TAG, "No nodes configured, waiting for user setup");
         }
     }
 
@@ -205,14 +217,14 @@ public class GatewayManager {
     public int getRunningCount() {
         int c = 0;
         for (Runtime r : mRuntimes.values()) {
-            if (r.server.isRunning()) c++;
+            if (r.isRunning()) c++;
         }
         return c;
     }
 
     public boolean isRunning(String id) {
         Runtime r = mRuntimes.get(id);
-        return r != null && r.server.isRunning();
+        return r != null && r.isRunning();
     }
 
     public String getError(String id) {
@@ -252,7 +264,7 @@ public class GatewayManager {
                 mRuntimes.clear();
             }
             for (Runtime r : rs) {
-                r.server.shutdown();
+                r.shutdown();
             }
             notifyStateChanged();
         }, "Gate-StopAll").start();
@@ -273,7 +285,7 @@ public class GatewayManager {
             synchronized (mRuntimes) {
                 r = mRuntimes.remove(id);
             }
-            if (r != null) r.server.shutdown();
+            if (r != null) r.shutdown();
             notifyStateChanged();
         }, "Gate-Stop-" + id).start();
     }
@@ -281,7 +293,7 @@ public class GatewayManager {
     private void startNodeInternal(GatewayNode n) {
         // 已在跑则跳过
         Runtime existing = mRuntimes.get(n.getId());
-        if (existing != null && existing.server.isRunning()) {
+        if (existing != null && existing.isRunning()) {
             LogStore.d(TAG, "Node already running: " + n.getName() + " (port " + n.getLocalPort() + ")");
             return;
         }
@@ -295,19 +307,37 @@ public class GatewayManager {
             } else {
                 baseUrl = "https://" + n.getStunDomain();
             }
+            // TCP 透传模式：本地端口直接做四层字节流管道，不再启动 HTTP 服务器（避免同端口冲突）
+            if (n.getDiscoveryMethod() == GatewayNode.DISCOVERY_TXT
+                    || n.getDiscoveryMethod() == GatewayNode.DISCOVERY_REDIRECT) {
+                TcpTunnelHandler tcpHandler = new TcpTunnelHandler(
+                        n.getLocalPort(), 8888, n.getDiscoveryMethod(),
+                        n.getCfUrl(), n.getStunDomain());
+                // startServer() 是阻塞式 accept 循环，必须运行在独立线程，否则会卡死启动流程
+                new Thread(tcpHandler::startServer, "TcpTunnel-" + n.getId()).start();
+                synchronized (mRuntimes) {
+                    mRuntimes.put(n.getId(), new Runtime(null, null, null, tcpHandler, null));
+                }
+                mErrors.remove(n.getId());
+                LogStore.i(TAG, "Node started (TCP tunnel): " + n.getName()
+                        + " (port " + n.getLocalPort()
+                        + ", mode=" + getModeLabel(n.getDiscoveryMethod()) + ")");
+                return;
+            }
+
             RedirectForwarder forwarder = new RedirectForwarder(baseUrl);
+            WebDavProxyHandler httpHandler = new WebDavProxyHandler(forwarder, n);
             DnsTxtResolver txtResolver = new DnsTxtResolver();
-            WebDavProxyHandler handler = new WebDavProxyHandler(forwarder, txtResolver, n);
-            GatewayServer server = new GatewayServer(n.getLocalPort(), handler);
-            server.startup();
+            GatewayServer httpServer = new GatewayServer(n.getLocalPort(), httpHandler);
+            httpServer.startup();
             synchronized (mRuntimes) {
-                mRuntimes.put(n.getId(), new Runtime(forwarder, txtResolver, handler, server));
+                mRuntimes.put(n.getId(), new Runtime(forwarder, txtResolver, httpHandler, null, httpServer));
             }
             mErrors.remove(n.getId());
             String mode = getModeLabel(n.getDiscoveryMethod());
             String address = n.getDiscoveryMethod() == GatewayNode.DISCOVERY_REDIRECT
                     ? n.getCfUrl() : n.getStunDomain();
-            LogStore.i(TAG, "Node started: " + n.getName() + " (port " + server.getBoundPort() + ", addr=" + address + ", mode=" + mode + ")");
+            LogStore.i(TAG, "Node started: " + n.getName() + " (port " + httpServer.getBoundPort() + ", addr=" + address + ", mode=" + mode + ")");
         } catch (Exception e) {
             // 端口占用/无权限等：记录错误，不影响其他节点启动
             String errMsg = e.getMessage();

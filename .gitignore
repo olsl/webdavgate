@@ -18,3 +18,9 @@ Thumbs.db
 # Trae artifacts
 .javac-out/
 .vscode/
+
+# Local tools / logs
+adb.exe
+AdbWinApi.dll
+AdbWinUsbApi.dll
+logcat_dump.txt

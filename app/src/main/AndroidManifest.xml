@@ -42,10 +42,12 @@
             android:label="@string/log_viewer_title"
             android:theme="@style/Theme.WebDavGate" />
 
-        <!-- 网关前台服务：常驻通知 + dataSync 类型 -->
+        <!-- 网关前台服务：常驻通知 + dataSync 类型。
+             exported=true：允许 adb/自动化工具（Tasker 等）通过 ACTION_START/STOP 控制网关，
+             锁屏或无 INJECT_EVENTS 权限时也能远程启停 -->
         <service
             android:name=".service.GatewayService"
-            android:exported="false"
+            android:exported="true"
             android:foregroundServiceType="dataSync" />
 
     </application>

@@ -34,10 +34,13 @@ public class DnsTxtResolver {
     private static final int DNS_TIMEOUT_SEC = 5;
 
     /** TXT 记录缓存有效期（毫秒） */
-    private static final long CACHE_TTL_MS = 2 * 60 * 1000; // 2 分钟
+    private static final long CACHE_TTL_MS = 10 * 60 * 1000; // 10 分钟
 
     /** HTTP 客户端用于探测 CF 重定向 */
     private final OkHttpClient mClient;
+
+    /** DNS 查询重试次数 */
+    private static final int DNS_RETRY_COUNT = 3;
 
     /** 缓存：domain → [origin, timestamp] */
     private final ConcurrentHashMap<String, String[]> mCache = new ConcurrentHashMap<>();
@@ -125,6 +128,9 @@ public class DnsTxtResolver {
     public void invalidateCache(String domain) {
         mCache.remove(domain);
         mCache.remove("txt:" + domain);
+        // 清除所有相关缓存，确保上游变化时能及时更新
+        // 只清除与该domain相关的缓存，而不是全部清除
+        // mCache.clear();
     }
 
     // ------------------------------------------------------------------
@@ -135,17 +141,27 @@ public class DnsTxtResolver {
     private String resolveViaDoH(String domain) {
         // 国内可用的 DoH 源优先，dns.google 作为兜底（部分地区无法直连 8.8.8.8）
         String[] endpoints = {
-                "https://dns.alidns.com/resolve?name=" + domain + "&type=TXT",
                 "https://doh.pub/dns-query?name=" + domain + "&type=TXT",
+                "https://dns.alidns.com/resolve?name=" + domain + "&type=TXT",
                 "https://dns.google/resolve?name=" + domain + "&type=TXT"
         };
-        for (String url : endpoints) {
+        int retryCount = 0;
+        while (retryCount < DNS_RETRY_COUNT) {
+            String url = endpoints[retryCount % endpoints.length];
             String result = queryDoHEndpoint(url);
             if (result != null) {
                 LogStore.d(TAG, "DoH success via: " + url);
                 return result;
+            } else {
+                retryCount++;
+                if (retryCount < DNS_RETRY_COUNT) {
+                    LogStore.w(TAG, "DoH retry " + retryCount + "/3 via: " + url);
+                } else {
+                    LogStore.w(TAG, "DoH all retries exhausted for domain: " + domain);
+                }
             }
         }
+        LogStore.e(TAG, "All DoH endpoints failed for domain: " + domain);
         return null;
     }
 
@@ -184,6 +200,8 @@ public class DnsTxtResolver {
                             return parsed;
                         }
                     }
+                } else {
+                    LogStore.w(TAG, "DoH endpoint returned non-successful status: " + response.code() + " for " + url);
                 }
             }
             return null;
@@ -203,7 +221,10 @@ public class DnsTxtResolver {
      * </pre>
      */
     private String parseTxtRecord(String txt) {
-        if (txt == null || txt.isEmpty()) return null;
+        if (txt == null || txt.isEmpty()) {
+            LogStore.w(TAG, "parseTxtRecord: txt is null or empty");
+            return null;
+        }
 
         String trimmed = txt.trim();
         // 去除 DoH 可能添加的引号
@@ -211,7 +232,10 @@ public class DnsTxtResolver {
             trimmed = trimmed.substring(1, trimmed.length() - 1);
         }
         trimmed = trimmed.trim();
-        if (trimmed.isEmpty()) return null;
+        if (trimmed.isEmpty()) {
+            LogStore.w(TAG, "parseTxtRecord: txt is empty after trimming");
+            return null;
+        }
 
         // 格式1: stun=http://... 或 stun=https://...
         int stunIdx = trimmed.indexOf("stun=");
@@ -254,12 +278,14 @@ public class DnsTxtResolver {
                 // 尝试解析 host
                 InetAddress addr = InetAddress.getByName(host);
                 return "http://" + addr.getHostAddress() + trimmed.substring(colonIdx);
-            } catch (Exception ignored) {
+            } catch (Exception e) {
+                LogStore.w(TAG, "parseTxtRecord: failed to resolve host " + host + ": " + e.getMessage());
                 // 可能已经是 IP，直接返回
                 return "http://" + trimmed;
             }
         }
 
+        LogStore.w(TAG, "parseTxtRecord: no matching format found for txt: " + txt);
         return null;
     }
 
@@ -286,5 +312,10 @@ public class DnsTxtResolver {
     /** 写入缓存 */
     private void putCache(String key, String origin) {
         mCache.put(key, new String[]{origin, String.valueOf(System.currentTimeMillis())});
+        // 同时为 domain 本身也写入缓存，确保 invalidateCache 能正确清除
+        if (key.startsWith("txt:")) {
+            String domain = key.substring(4);
+            mCache.put(domain, new String[]{origin, String.valueOf(System.currentTimeMillis())});
+        }
     }
 }

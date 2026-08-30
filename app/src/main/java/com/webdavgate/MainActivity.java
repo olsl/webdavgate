@@ -89,7 +89,7 @@ public class MainActivity extends AppCompatActivity
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        LogStore.i("MainActivity", "APP started (v1.2), building UI...");
+        LogStore.i("MainActivity", "APP started (v1.4), building UI...");
 
         mToolbar = findViewById(R.id.toolbar);
         mStatusDot = findViewById(R.id.statusDot);
@@ -273,7 +273,6 @@ public class MainActivity extends AppCompatActivity
         android.widget.TextView modeHelp = body.findViewById(R.id.modeHelp);
 
         boolean edit = node != null;
-        int discoveryMethod = GatewayNode.DISCOVERY_REDIRECT;
 
         if (edit) {
             etName.setText(node.getName());
@@ -284,18 +283,17 @@ public class MainActivity extends AppCompatActivity
                 etUrl.setText(node.getCfUrl());
             }
             etPort.setText(String.valueOf(node.getLocalPort()));
-            discoveryMethod = node.getDiscoveryMethod();
+            int discoveryMethod = node.getDiscoveryMethod();
         } else {
             etPort.setText("8888");
+            int discoveryMethod = GatewayNode.DISCOVERY_REDIRECT;
         }
 
         // 设置模式单选
-        switch (discoveryMethod) {
-            case GatewayNode.DISCOVERY_TXT:
-                discoveryGroup.check(R.id.radioTxt);
-                break;
-            default:
-                discoveryGroup.check(R.id.radioRedirect);
+        if (node != null && node.getDiscoveryMethod() == GatewayNode.DISCOVERY_TXT) {
+            discoveryGroup.check(R.id.radioTxt);
+        } else {
+            discoveryGroup.check(R.id.radioRedirect);
         }
 
         // 模式变化时更新帮助文字

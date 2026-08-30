@@ -45,6 +45,9 @@
     <string name="mode_auto_help">优先尝试 TXT 查询，失败时回退到 302 重定向</string>
     <string name="txt_mode_help">TXT 模式：直接查询 DNS TXT 记录获取 STUN 地址。\nTXT 记录格式支持：stun=http://IP:Port 或 ip=IP&amp;port=Port</string>
 
+    <!-- 透传说明：单一端口同时支持网页与 WebDAV，无需选择请求类型 -->
+    <string name="unified_help">纯 TCP 透传：同一端口同时支持网页浏览与 WebDAV（PROPFIND 等），客户端请求的路径会原样传递。监听 0.0.0.0，局域网设备也可用手机 IP 访问。CX 文件管理器请用 http://（不能用 https）连接 http://127.0.0.1:本地端口，路径按后端实际填写（如 /dav），使用 NAS 账号密码</string>
+
     <!-- 通知 -->
     <string name="noti_channel_name">网关服务</string>
     <string name="noti_channel_desc">保持 WebDAV 网关后台运行</string>

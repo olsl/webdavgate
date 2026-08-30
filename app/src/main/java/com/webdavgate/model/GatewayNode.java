@@ -9,11 +9,11 @@ import java.util.UUID;
  * 网关节点模型：一个节点 = 一条 CF 入口 + 一个本地监听端口 + 发现模式。
  *
  * <p>支持两种 STUN 直连地址发现方式：
- * <ul>
- *   <li>{@link #DISCOVERY_REDIRECT}：传统 Cloudflare 302/307 重定向解析（默认）</li>
- *   <li>{@link #DISCOVERY_TXT}：DNS TXT 记录解析，直接从 DNS 获取 STUN 地址</li>
- *   <li>{@link #DISCOVERY_AUTO}：先试 TXT，失败回退到重定向</li>
- * </ul>
+ *   <ul>
+ *     <li>{@link #DISCOVERY_REDIRECT}：传统 Cloudflare 302/307 重定向解析（默认）</li>
+ *     <li>{@link #DISCOVERY_TXT}：DNS TXT 记录解析，直接从 DNS 获取 STUN 地址</li>
+ *     <li>{@link #DISCOVERY_AUTO}：先试 TXT，失败回退到重定向</li>
+ *   </ul>
  *
  * <p>可持久化的多节点列表：每个节点带稳定 id（增删改定位）、
  * enabled 标志（决定是否随前台服务一同启动），并提供 JSON 序列化供
@@ -43,11 +43,14 @@ public class GatewayNode {
     /** 是否随前台服务启动；关闭的节点不会被 startAll 拉起，但可单独手动启动 */
     private boolean enabled;
 
-    /** STUN 地址发现模式：0=重定向, 1=TXT, 2=自动 */
+    /** STUN 地址发现模式：0=重定向，1=TXT，2=自动 */
     private int discoveryMethod;
 
     /** TXT 记录查询的域名（如 "nas.shdj.cc.cd"），为空则用 cfUrl 的域名 */
     private String stunDomain;
+
+    /** 本地 TCP Socket，用于 TCP 透传模式 */
+    private java.net.Socket localSocket;
 
     public GatewayNode(String name, String cfUrl, int localPort) {
         this(UUID.randomUUID().toString(), name, cfUrl, localPort, true, DISCOVERY_REDIRECT, "");
@@ -88,6 +91,9 @@ public class GatewayNode {
     public String getStunDomain() { return stunDomain; }
     public void setStunDomain(String stunDomain) { this.stunDomain = stunDomain == null ? "" : stunDomain; }
 
+    public java.net.Socket getLocalSocket() { return localSocket; }
+    public void setLocalSocket(java.net.Socket socket) { this.localSocket = socket; }
+
     /** 序列化为 JSON，供 NodeStore 落盘 */
     public JSONObject toJson() {
         JSONObject o = new JSONObject();
@@ -99,21 +105,26 @@ public class GatewayNode {
             o.put("enabled", enabled);
             o.put("discoveryMethod", discoveryMethod);
             o.put("stunDomain", stunDomain == null ? "" : stunDomain);
-        } catch (JSONException ignored) {
+        } catch (JSONException e) {
+            throw new RuntimeException(e);
         }
         return o;
     }
 
     /** 从 JSON 反序列化 */
-    public static GatewayNode fromJson(JSONObject o) throws JSONException {
-        int dm = o.optInt("discoveryMethod", DISCOVERY_REDIRECT);
-        return new GatewayNode(
-                o.getString("id"),
-                o.optString("name", ""),
-                o.optString("cfUrl", ""),
-                o.optInt("localPort", 0),
-                o.optBoolean("enabled", true),
-                dm,
-                o.optString("stunDomain", ""));
+    public static GatewayNode fromJson(JSONObject o) {
+        try {
+            return new GatewayNode(
+                    o.getString("id"),
+                    o.getString("name"),
+                    o.getString("cfUrl"),
+                    o.getInt("localPort"),
+                    o.getBoolean("enabled"),
+                    o.getInt("discoveryMethod"),
+                    o.getString("stunDomain")
+            );
+        } catch (JSONException e) {
+            throw new RuntimeException(e);
+        }
     }
 }

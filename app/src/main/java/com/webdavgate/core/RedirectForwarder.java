@@ -62,7 +62,7 @@ public class RedirectForwarder {
     private final java.util.concurrent.ConcurrentHashMap<String, String> mRedirectCache = new java.util.concurrent.ConcurrentHashMap<>();
 
     /** 缓存项有效期（毫秒）。STUN 地址可能动态变化，过期后强制走 CF 重新学习 */
-    private static final long CACHE_TTL_MS = 2 * 60 * 1000; // 2 分钟（缩短，更快适应端口变化）
+    private static final long CACHE_TTL_MS = 2 * 60 * 1000; // 2 分钟
 
     /** 缓存值：origin + 时间戳，用数组存避免再定义类 */
     private final java.util.concurrent.ConcurrentHashMap<String, long[]> mCacheTime = new java.util.concurrent.ConcurrentHashMap<>();
@@ -156,33 +156,53 @@ public class RedirectForwarder {
     /** 查询缓存：返回 CF host 对应的 STUN origin，未命中或已过期返回 null */
     private String getCachedOrigin(String cfUrl) {
         String host = hostOf(cfUrl);
-        if (host == null) return null;
+        if (host == null) {
+            LogStore.w(TAG, "getCachedOrigin: invalid cfUrl " + cfUrl);
+            return null;
+        }
         String origin = mRedirectCache.get(host);
-        if (origin == null) return null;
+        if (origin == null) {
+            LogStore.d(TAG, "getCachedOrigin: cache miss for host " + host);
+            return null;
+        }
         long[] ts = mCacheTime.get(host);
         if (ts == null || System.currentTimeMillis() - ts[0] > CACHE_TTL_MS) {
             // 过期，清理
+            LogStore.d(TAG, "getCachedOrigin: cache expired for host " + host);
             mRedirectCache.remove(host);
             mCacheTime.remove(host);
             return null;
         }
+        LogStore.d(TAG, "getCachedOrigin: cache hit for host " + host + " -> " + origin);
         return origin;
     }
 
     /** 写入缓存 */
     private void putCachedOrigin(String cfUrl, String stunOrigin) {
         String host = hostOf(cfUrl);
-        if (host == null || stunOrigin == null) return;
+        if (host == null || stunOrigin == null) {
+            LogStore.w(TAG, "putCachedOrigin: invalid parameters - cfUrl=" + cfUrl + ", stunOrigin=" + stunOrigin);
+            return;
+        }
         mRedirectCache.put(host, stunOrigin);
         mCacheTime.put(host, new long[]{System.currentTimeMillis()});
+        LogStore.d(TAG, "putCachedOrigin: cached " + host + " -> " + stunOrigin);
     }
 
     /** 失效缓存 */
     private void invalidateCache(String cfUrl) {
         String host = hostOf(cfUrl);
-        if (host == null) return;
+        if (host == null) {
+            LogStore.w(TAG, "invalidateCache: invalid cfUrl " + cfUrl);
+            return;
+        }
         mRedirectCache.remove(host);
         mCacheTime.remove(host);
+        LogStore.d(TAG, "invalidateCache: removed cache for host " + host);
+        // 清除所有相关缓存，确保上游变化时能及时更新
+        // 只清除与该host相关的缓存，而不是全部清除
+        // mRedirectCache.clear();
+        // mCacheTime.clear();
     }
 
     /**
